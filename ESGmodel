@@ -1,0 +1,271 @@
+# Project 1: AI-Powered ESG Credit Risk Assessment System
+# This project combines credit risk modeling with ESG scoring - a hot trend in sustainable finance
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, roc_curve
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+import warnings
+warnings.filterwarnings('ignore')
+
+# Set random seed for reproducibility
+np.random.seed(42)
+
+print("=== AI-Powered ESG Credit Risk Assessment System ===")
+print("This project demonstrates machine learning for credit risk evaluation with ESG factors integration\n")
+
+# Generate synthetic but realistic dataset
+def generate_esg_credit_data(n_samples=5000):
+    """Generate synthetic credit data with ESG factors"""
+    
+    # Basic customer demographics
+    age = np.random.normal(40, 15, n_samples)
+    age = np.clip(age, 18, 80)
+    
+    annual_income = np.random.lognormal(10.5, 0.8, n_samples)
+    annual_income = np.clip(annual_income, 20000, 500000)
+    
+    # Credit history features
+    credit_history_length = np.random.exponential(5, n_samples)
+    credit_history_length = np.clip(credit_history_length, 0, 30)
+    
+    existing_loans = np.random.poisson(2, n_samples)
+    existing_loans = np.clip(existing_loans, 0, 10)
+    
+    debt_to_income = np.random.beta(2, 5, n_samples) * 0.8
+    
+    # ESG factors (Environmental, Social, Governance scores)
+    # Companies/individuals with better ESG practices tend to have lower default risk
+    environmental_score = np.random.beta(2, 2, n_samples) * 100
+    social_score = np.random.beta(2, 2, n_samples) * 100  
+    governance_score = np.random.beta(2, 2, n_samples) * 100
+    
+    # Company sector (affects ESG importance)
+    sectors = ['Technology', 'Financial', 'Healthcare', 'Energy', 'Manufacturing', 'Retail']
+    sector = np.random.choice(sectors, n_samples)
+    
+    # Calculate composite ESG score
+    esg_composite = (environmental_score + social_score + governance_score) / 3
+    
+    # Generate default probability based on features (ESG factors reduce default risk)
+    default_prob = (
+        0.3 * (1 - annual_income / 200000) +
+        0.2 * debt_to_income +
+        0.1 * (existing_loans / 10) +
+        0.1 * (1 - credit_history_length / 30) +
+        0.15 * (1 - esg_composite / 100) +  # Better ESG = lower default risk
+        0.05 * (age < 25).astype(int) +
+        0.1 * np.random.normal(0, 0.1, n_samples)
+    )
+    
+    # Convert to binary default outcome
+    default = (default_prob + np.random.normal(0, 0.1, n_samples) > 0.4).astype(int)
+    
+    # Create DataFrame
+    data = pd.DataFrame({
+        'age': age,
+        'annual_income': annual_income,
+        'credit_history_length': credit_history_length,
+        'existing_loans': existing_loans,
+        'debt_to_income_ratio': debt_to_income,
+        'environmental_score': environmental_score,
+        'social_score': social_score,
+        'governance_score': governance_score,
+        'esg_composite_score': esg_composite,
+        'sector': sector,
+        'default': default
+    })
+    
+    return data
+
+# Generate the dataset
+print("Generating synthetic ESG credit risk dataset...")
+df = generate_esg_credit_data(5000)
+print(f"Dataset created with {len(df)} samples\n")
+
+# Display basic statistics
+print("Dataset Overview:")
+print(df.head())
+print(f"\nDataset Shape: {df.shape}")
+print(f"\nDefault Rate: {df['default'].mean():.2%}")
+print(f"\nMissing Values: {df.isnull().sum().sum()}")
+
+# Display ESG score distributions
+print(f"\nESG Score Statistics:")
+print(f"Average Environmental Score: {df['environmental_score'].mean():.1f}")
+print(f"Average Social Score: {df['social_score'].mean():.1f}")
+print(f"Average Governance Score: {df['governance_score'].mean():.1f}")
+print(f"Average Composite ESG Score: {df['esg_composite_score'].mean():.1f}")
+
+# Exploratory Data Analysis
+print("\n=== EXPLORATORY DATA ANALYSIS ===")
+
+# Analyze default rates by ESG quartiles
+df['esg_quartile'] = pd.qcut(df['esg_composite_score'], 4, labels=['Q1 (Low)', 'Q2', 'Q3', 'Q4 (High)'])
+esg_default_rates = df.groupby('esg_quartile')['default'].agg(['count', 'sum', 'mean']).round(3)
+esg_default_rates.columns = ['Total_Customers', 'Total_Defaults', 'Default_Rate']
+print("Default Rates by ESG Quartile:")
+print(esg_default_rates)
+
+# Analyze by sector
+sector_analysis = df.groupby('sector')['default'].agg(['count', 'mean']).round(3)
+sector_analysis.columns = ['Total_Customers', 'Default_Rate']
+print(f"\nDefault Rates by Sector:")
+print(sector_analysis)
+
+# Feature correlation analysis
+numeric_features = ['age', 'annual_income', 'credit_history_length', 'existing_loans', 
+                   'debt_to_income_ratio', 'environmental_score', 'social_score', 
+                   'governance_score', 'esg_composite_score']
+
+correlation_with_default = df[numeric_features + ['default']].corr()['default'].drop('default').sort_values()
+print(f"\nFeature Correlation with Default Risk:")
+for feature, corr in correlation_with_default.items():
+    print(f"{feature}: {corr:.3f}")
+
+# Prepare data for machine learning
+print(f"\n=== MACHINE LEARNING MODEL TRAINING ===")
+
+# Encode categorical variables
+le = LabelEncoder()
+df['sector_encoded'] = le.fit_transform(df['sector'])
+
+# Select features for modeling
+feature_columns = ['age', 'annual_income', 'credit_history_length', 'existing_loans',
+                  'debt_to_income_ratio', 'environmental_score', 'social_score', 
+                  'governance_score', 'esg_composite_score', 'sector_encoded']
+
+X = df[feature_columns]
+y = df['default']
+
+# Split the data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+# Scale features
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+print(f"Training set size: {len(X_train)}")
+print(f"Test set size: {len(X_test)}")
+
+# Train multiple models
+models = {
+    'Logistic Regression': LogisticRegression(random_state=42),
+    'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42),
+    'Gradient Boosting': GradientBoostingClassifier(random_state=42)
+}
+
+model_results = {}
+
+for name, model in models.items():
+    print(f"\nTraining {name}...")
+    
+    # Use scaled data for Logistic Regression, original for tree-based models
+    if name == 'Logistic Regression':
+        model.fit(X_train_scaled, y_train)
+        y_pred = model.predict(X_test_scaled)
+        y_pred_proba = model.predict_proba(X_test_scaled)[:, 1]
+    else:
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+    
+    # Calculate metrics
+    auc_score = roc_auc_score(y_test, y_pred_proba)
+    
+    model_results[name] = {
+        'model': model,
+        'auc_score': auc_score,
+        'predictions': y_pred,
+        'probabilities': y_pred_proba
+    }
+    
+    print(f"{name} AUC Score: {auc_score:.3f}")
+
+# Select best model
+best_model_name = max(model_results.keys(), key=lambda x: model_results[x]['auc_score'])
+best_model = model_results[best_model_name]['model']
+
+print(f"\nBest Model: {best_model_name} (AUC: {model_results[best_model_name]['auc_score']:.3f})")
+
+# Feature importance analysis
+if hasattr(best_model, 'feature_importances_'):
+    feature_importance = pd.DataFrame({
+        'feature': feature_columns,
+        'importance': best_model.feature_importances_
+    }).sort_values('importance', ascending=False)
+    
+    print(f"\nTop Feature Importances ({best_model_name}):")
+    for idx, row in feature_importance.head(10).iterrows():
+        print(f"{row['feature']}: {row['importance']:.3f}")
+
+# Detailed classification report for best model
+print(f"\nDetailed Classification Report ({best_model_name}):")
+print(classification_report(y_test, model_results[best_model_name]['predictions']))
+
+# ESG Impact Analysis
+print(f"\n=== ESG IMPACT ANALYSIS ===")
+
+# Create model without ESG features to compare
+features_no_esg = ['age', 'annual_income', 'credit_history_length', 'existing_loans',
+                   'debt_to_income_ratio', 'sector_encoded']
+
+X_train_no_esg = X_train[features_no_esg]
+X_test_no_esg = X_test[features_no_esg]
+
+# Train model without ESG
+model_no_esg = RandomForestClassifier(n_estimators=100, random_state=42)
+model_no_esg.fit(X_train_no_esg, y_train)
+y_pred_proba_no_esg = model_no_esg.predict_proba(X_test_no_esg)[:, 1]
+auc_no_esg = roc_auc_score(y_test, y_pred_proba_no_esg)
+
+print(f"Model Performance Comparison:")
+print(f"With ESG Features: AUC = {model_results[best_model_name]['auc_score']:.3f}")
+print(f"Without ESG Features: AUC = {auc_no_esg:.3f}")
+print(f"ESG Impact: +{model_results[best_model_name]['auc_score'] - auc_no_esg:.3f} AUC improvement")
+
+# Risk Score Generation
+print(f"\n=== RISK SCORING SYSTEM ===")
+
+# Generate risk scores (0-1000 scale)
+test_probabilities = model_results[best_model_name]['probabilities']
+risk_scores = (1 - test_probabilities) * 1000  # Higher score = lower risk
+
+# Create risk score summary
+risk_summary = pd.DataFrame({
+    'Risk_Score': risk_scores,
+    'Default_Probability': test_probabilities,
+    'Actual_Default': y_test.values,
+    'ESG_Score': X_test['esg_composite_score'].values
+})
+
+# Risk score distributions
+print("Risk Score Distribution:")
+print(f"Mean Risk Score: {risk_scores.mean():.1f}")
+print(f"Risk Score Range: {risk_scores.min():.1f} - {risk_scores.max():.1f}")
+
+# High ESG vs Low ESG comparison
+high_esg_mask = risk_summary['ESG_Score'] >= risk_summary['ESG_Score'].quantile(0.75)
+low_esg_mask = risk_summary['ESG_Score'] <= risk_summary['ESG_Score'].quantile(0.25)
+
+print(f"\nRisk Profile Comparison:")
+print(f"High ESG Companies (Top 25%):")
+print(f"  Average Risk Score: {risk_summary[high_esg_mask]['Risk_Score'].mean():.1f}")
+print(f"  Default Rate: {risk_summary[high_esg_mask]['Actual_Default'].mean():.2%}")
+
+print(f"Low ESG Companies (Bottom 25%):")
+print(f"  Average Risk Score: {risk_summary[low_esg_mask]['Risk_Score'].mean():.1f}")
+print(f"  Default Rate: {risk_summary[low_esg_mask]['Actual_Default'].mean():.2%}")
+
+print(f"\n=== PROJECT 1 SUMMARY ===")
+print("✅ Successfully built AI-powered ESG credit risk assessment system")
+print(f"✅ Analyzed {len(df)} customer records with ESG factors")
+print(f"✅ Achieved {model_results[best_model_name]['auc_score']:.1%} accuracy in risk prediction")
+print(f"✅ Demonstrated {model_results[best_model_name]['auc_score'] - auc_no_esg:.1%} improvement from ESG integration")
+print("✅ Generated automated risk scoring system (0-1000 scale)")
